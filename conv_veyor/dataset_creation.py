@@ -73,49 +73,34 @@ def sp_noise(image, prob, colors='rgbkw'):
 
 # %%
 def obfuscate_image(image):
-    for f, kwargs in [
-        # (np.asarray, {}),
-        # (dots_noise, {'prob':0.2}),
-        # (sp_noise, {'prob':0.1}),
-        # (Image.fromarray, {})
-    ]:
-        image = f(image, **kwargs)
+    image = np.asarray(image)
+    image = dots_noise(image, prob=0.2)
+    image = sp_noise(image, prob=0.1)
+    image = Image.fromarray(image)
     return image
 
 
 # %%
 def obfuscate_image2(image):
-    for f, args in [
-        (np.asarray, []),
-        (cv2.cvtColor, [cv2.COLOR_RGB2GRAY]),
-        (sp_noise, {'prob':0.05, 'colors':'k'}),
-        (cv2.blur,[(3,3),5]),
-        (lambda x: cv2.threshold(x,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1], ()),
-        (cv2.blur,[(2,2),10]),
-        (cv2.filter2D, {'ddepth':-1,'kernel':np.array([[0,-1,0],[-1,6,-1],[0,-1,0]])}),
-        (Image.fromarray, {}),
-        (lambda x: x.resize((np.array(x.size) / 1.2).astype(int)),()),
-    ]:
-        if isinstance(args, dict):
-            image = f(image, **args)
-        else:
-            image = f(image, *args)
+    image = np.asarray(image)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    image = sp_noise(image, prob=0.05, colors='k')
+    image = cv2.blur(image, (3,3),5)
+    image = cv2.threshold(image,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
+    image = cv2.blur(image, (2,2),10)
+    image = cv2.filter2D(image, ddepth=-1,kernel=np.array([[0,-1,0],[-1,6,-1],[0,-1,0]]))
+    image = Image.fromarray(image)
+    image = image.resize((np.array(image.size) / 1.2).astype(int))
     return image
 
 def obfuscate_image3(image):
-    for f, args in [
-        (lambda x: x.resize((np.array(x.size) / 2).astype(int)),()),
-        (lambda x: x.resize((np.array(x.size) * 2).astype(int)),()),
-        (np.asarray, []),
-        (cv2.cvtColor, [cv2.COLOR_RGB2GRAY]),
-        (lambda x: cv2.threshold(x,0,255,cv2.THRESH_TOZERO+cv2.THRESH_OTSU)[1], ()),
-        (lambda x: cv2.addWeighted(x, 1.5, cv2.GaussianBlur(x,(3,3),5),-0.5, 0), ()),
-        (Image.fromarray, {}),
-    ]:
-        if isinstance(args, dict):
-            image = f(image, **args)
-        else:
-            image = f(image, *args)
+    image = image.resize((np.array(image.size) / 2).astype(int))
+    image = image.resize((np.array(image.size) * 2).astype(int))
+    image = np.asarray(image)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    image = cv2.threshold(image,0,255,cv2.THRESH_TOZERO+cv2.THRESH_OTSU)[1]
+    image = cv2.addWeighted(image, 1.5, cv2.GaussianBlur(image,(3,3),5),-0.5, 0)
+    image = Image.fromarray(image)
     return image
 
 
