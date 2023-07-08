@@ -16,11 +16,12 @@ fonts_dir = './fonts/'
 wikipedia.set_lang('uk')
 ukr_syms = list('йцукенгшщзхїфівапролджєячсмитьбює0987654321-=+*/----___.,.,,.        ')
 
+
 # %%
 def get_bw(image):
     if len(image.shape) == 2:
         black = 0
-        white = 255            
+        white = 255
     else:
         colorspace = image.shape[2]
         if colorspace == 3:  # RGB
@@ -34,7 +35,7 @@ def get_bw(image):
 
 def dots_noise(image, prob, scale=5):
 
-    output = image.copy() 
+    output = image.copy()
     black, white = get_bw(image)
 
     probs = np.random.random((np.array(output.shape[:2])/scale).astype(int))
@@ -63,7 +64,7 @@ def sp_noise(image, prob, colors='rgbkw'):
         'w': white,
     }
 
-    output = image.copy() 
+    output = image.copy()
     probs = np.random.random((np.array(output.shape[:2])).astype(int))
 
     for smol, big, c in zip(splits, splits[1:], colors):
@@ -134,31 +135,31 @@ class Text2ImgGen:
         for n in range(1, self.max_char):
             if font.getlength(self.text[:n]) > w - self.size/2:
                 break
-        
+
         text, self.text = self.text[:n], re.sub(r'.*? ','',self.text[n:], count=1)
-        
+
         if np.random.ranf() < 0.3:
             top = ''
         else:
             top = ''.join(np.random.choice(ukr_syms, len(text)+1))
-        
+
         if np.random.ranf() < 0.3:
             bot = ''
         else:
             bot = ''.join(np.random.choice(ukr_syms, len(text)+1))
 
         display_text = top + '\n' + text + '\n' + bot
-        
+
         im = Image.new("RGB",(w+w_cut*2,h+h_cut*2), background)
         draw = ImageDraw.Draw(im)
 
         draw.multiline_text(
-            ((w+w_cut)/2,(h+h_cut)/2), 
-            display_text, 
-            fill=foreground, 
-            font=font, 
-            align='center', 
-            anchor='mm', 
+            ((w+w_cut)/2,(h+h_cut)/2),
+            display_text,
+            fill=foreground,
+            font=font,
+            align='center',
+            anchor='mm',
             spacing=np.random.randint(-1,5)
         )
 
@@ -169,18 +170,18 @@ class Text2ImgGen:
         if not top and np.random.ranf() < 0.5:
             y = np.random.randint(h+h_cut/2-8, h+h_cut/2-1)
             draw.line((0, y, w+w_cut, y), fill=foreground, width=np.random.randint(1, 3))
-            
+
         possible_angle_dist_std = np.rad2deg(np.arctan((h-self.size)/w*1.5))/3
         im = (
             im
             .rotate(
-                np.random.normal(0, possible_angle_dist_std), 
+                np.random.normal(0, possible_angle_dist_std),
                 PIL.Image.Resampling.BICUBIC,
                 fillcolor=background
             )
             .crop((w_cut/2, h_cut/2, w+w_cut/2, h+h_cut/2))
         )
-        
+
         return obfuscate_image(im), text, ''.join([el[:2] for el in (' '.join(font.getname()).split())])
 
 
@@ -189,7 +190,7 @@ def generate_random_text(char_dict_path, word_count:'int', word_len:'tuple[int,i
     with open(char_dict_path) as f:
         chars = f.read()
     chars = list(chars.replace('\n',''))
-    
+
     return ''.join(
         np.concatenate([
             np.r_[
@@ -201,10 +202,10 @@ def generate_random_text(char_dict_path, word_count:'int', word_len:'tuple[int,i
     )
 #%%
 # %%
-def generate_dataset(ttsplit, text, starting_n):
+def _generate_dataset(ttsplit, text, starting_n):
 
     with ThreadPoolExecutor(100) as exer:
-        
+
         for img, label, fontname in Text2ImgGen(
             text,
             fonts_dir,
@@ -212,7 +213,7 @@ def generate_dataset(ttsplit, text, starting_n):
         ):
             name = f'Word_{starting_n}_{fontname}.png'
             coinflip = ttsplit['train' if np.random.ranf() > 0.1 else 'test']
-            
+
             exer.submit(lambda: img.save(coinflip['data']/name))
             print(
                 f"{coinflip['data'].stem}/{name}\t{label}",
@@ -224,117 +225,150 @@ def generate_dataset(ttsplit, text, starting_n):
     return starting_n
 # %%
 
-def main_generating_sequence(root):
-    topics = [
-        'запоріжсталь',
-        'каметсталь',
-        'інвойс',
-        'податки',
-        'ідентифікатор',
-        'ГОК',
-        'клієнт',
-        'таблиця',
-        'коди',
-        'штрих-код',
-        'QR-код',
-        'рахунок',
-        'фактура'
-    ]
 
-    allowed = pd.Series(list('ёйїЁЙЇ')).str.normalize('NFC').values
+def _generate_dataset_from_wiki(
+    ttsplit_files,
+    topics:'list[str]',
+    allowed:'list[str]'
+):
+    written_file_count = 0
+    for topic in topics:
+        for idea in np.random.permutation(wikipedia.search(topic, results=10)):
+
+            try:
+                page = wikipedia.page(idea)
+            except wikipedia.DisambiguationError as e:
+                try:
+                    page = wikipedia.page(np.random.choice(e.options))
+                except Exception as e:
+                    print('skipping a page because of an unrecoverable wikipedia error:')
+                    print(e)
+                    continue
+
+            content = pd.Series(list(ud.normalize('NFKD', re.sub('\n','', page.content))))
+            questionable = content[content.apply(ud.combining)>0]
+            bad_index = questionable[
+                ~
+                (content.shift(1)[questionable.index] + questionable)
+                .str.normalize('NFC').isin(allowed)
+            ].index
+
+            written_file_count = _generate_dataset(
+                ttsplit=ttsplit_files,
+                text=ud.normalize('NFC',''.join(content.drop(index=bad_index))),
+                starting_n=written_file_count
+            )
+
+
+
+def _wrapper_for_fs_access(
+    root:str,
+    callback,
+    train_dir,
+    test_dir,
+    train_index,
+    test_index
+):
 
     root = Path(root).resolve()
     root.mkdir(exist_ok=True)
-    train_data_dir = root/'train'
+    train_data_dir = root/train_dir
     train_data_dir.mkdir(exist_ok=True)
-    test_data_dir = root/'test'
+    test_data_dir = root/test_dir
     test_data_dir.mkdir(exist_ok=True)
-    
 
-    with open(root/'rec_uk_train.txt', 'a') as train_labels, open(root/'rec_uk_test.txt', 'a') as test_labels:
+    with (
+        open(root/train_index, 'a') as train_labels,
+        open(root/test_index, 'a') as test_labels
+    ):
 
         ttsplit_files = {
             'train':{'data':train_data_dir,'labels':train_labels},
             'test': {'data':test_data_dir,'labels':test_labels},
         }
 
-        written_file_count = generate_dataset(
-            ttsplit=ttsplit_files, 
-            text=generate_random_text(
-                './PaddleOCR/ppocr/utils/dict/uk_dict_ours.txt',
-                100,
-                (3,8)
-            ),
-            starting_n=0
-            )
-    raise
-    if False:
-        for topic in topics:
-            for idea in np.random.permutation(wikipedia.search(topic, results=10)):
+        written_file_count = callback(ttsplit_files)
 
-                try:
-                    page = wikipedia.page(idea)
-                except wikipedia.DisambiguationError as e:
-                    try:
-                        page = wikipedia.page(np.random.choice(e.options))
-                    except Exception as e:
-                        print('skipping a page because of an unrecoverable wikipedia error:')
-                        print(e)
-                        continue
-                    
-                content = pd.Series(list(ud.normalize('NFKD', re.sub('\n','', page.content))))
-                questionable = content[content.apply(ud.combining)>0]
-                bad_index = questionable[
-                    ~
-                    (content.shift(1)[questionable.index] + questionable)
-                    .str.normalize('NFC').isin(allowed)
-                ].index
-                
-                written_file_count = generate_dataset(
-                    ttsplit=ttsplit_files,
-                    text=ud.normalize('NFC',''.join(content.drop(index=bad_index))),
-                    starting_n=written_file_count+1
-                )
 
     print('done')
-    os.system(f'ls {train_data_dir} > {root}/train_index.txt')
-    os.system(f'ls {test_data_dir} > {root}/test_index.txt')
+    return written_file_count
 
-
-
-# %%
-def heal_absent_images(root, data, labels):
-    root = Path(root)
-    datafiles = pd.Index(
-        pd.concat((
-            pd.read_csv(root/n).iloc[:,0]
-            for n in data
-        )).values
-    )
-    for labelfile in labels:
-        with open(root/labelfile, 'r') as f:
-            labeltext = f.read()
-        labelset = (
-            pd.read_csv(root/labelfile, sep='\t',header=None).iloc[:,0]
-            .str.split('/',expand=True).iloc[:,-1]
+def generate_random(
+    root,
+    word_count,
+    word_len,
+    train_dir,
+    test_dir,
+    train_index,
+    test_index
+):
+    def callback(ttsplit_files):
+        return _generate_dataset(
+            ttsplit=ttsplit_files,
+            text=generate_random_text(
+                './dict.txt',
+                word_count,
+                word_len
+            ),
+            starting_n=0
         )
-        bad = pd.Index(labelset.values).difference(pd.Index(datafiles))
-        print(bad)
-        for name in bad:
-            labeltext = re.sub(fr'\n.*{re.escape(name)}.*\n','\n', labeltext)
-        with open(root/labelfile, 'w') as f:
-            f.write(labeltext)
+    return _wrapper_for_fs_access(
+        root,
+        callback,
+        train_dir,
+        test_dir,
+        train_index,
+        test_index
+    )
+
+
+def generate_from_wiki(
+    root,
+    topics:'list[str]|None',
+    train_dir,
+    test_dir,
+    train_index,
+    test_index
+):
+    def callback(ttsplit_files):
+        allowed = pd.Series(list('ёйїЁЙЇ')).str.normalize('NFC').values
+        return _generate_dataset_from_wiki(
+            ttsplit_files,
+            topics,
+            allowed
+        )
+    return _wrapper_for_fs_access(
+        root,
+        callback,
+        train_dir,
+        test_dir,
+        train_index,
+        test_index
+    )
+
+
+def heal_absent_images(root, train_dir, test_dir, train_index, test_index):
+    root = Path(root)
+    for dirname, indexname in ((train_dir, train_index),(test_dir, test_index)):
+        dir = set(os.listdir(root/dirname))
+        with open(root/indexname) as f:
+            index = f.readlines()
+        index = [
+            line for line in index
+            if line.split('\t')[0].split('/')[-1] in dir
+        ]
+        with open(root/indexname, 'w') as f:
+            f.writelines(index)
 
 
 
 # %%
 def split_dataset_labels(n, source, leftover, new=None):
+    if n >= len(lines):
+        raise ValueError('n >= len(lines)')
     with open(source) as f:
         lines = np.array(f.read().split('\n'))
 
-    if n >= len(lines):
-        raise ValueError('n >= len(lines)')
-    
     chosen = np.random.randint(0, len(lines), size=n)
     split1, split2 = lines[chosen], np.delete(lines, chosen)
     with open(leftover, 'w') as f:
@@ -345,19 +379,45 @@ def split_dataset_labels(n, source, leftover, new=None):
 
 
 
-root = './PaddleOCR/train_data/generated_images'
-root = './test_images'
+if __name__ == '__main__':
 
-main_generating_sequence(root)
+    root = './test_images'
 
-heal_absent_images(
-    root,
-    ['train_index.txt','test_index.txt'],
-    ['rec_uk_train.txt','rec_uk_test.txt']
-)
+    # generate_random(root, 100, (3,8))
 
-split_dataset_labels(
-    1000, 
-    f'{root}/rec_uk_test.txt', 
-    f'{root}/rec_uk_test_backup.txt'
-)
+    generate_from_wiki(
+        root,
+        [
+        'запоріжсталь',
+        'каметсталь',
+        # 'інвойс',
+        # 'податки',
+        # 'ідентифікатор',
+        # 'ГОК',
+        # 'клієнт',
+        # 'таблиця',
+        # 'коди',
+        # 'штрих-код',
+        # 'QR-код',
+        # 'рахунок',
+        # 'фактура'
+        ],
+        'train',
+        'test',
+        'rec_train.txt',
+        'rec_test.txt',
+    )
+
+    heal_absent_images(
+        root,
+        'train',
+        'test',
+        'rec_train.txt',
+        'rec_test.txt'
+    )
+
+    # split_dataset_labels(
+    #     3,
+    #     f'{root}/rec_test.txt',
+    #     f'{root}/rec_test_backup.txt'
+    # )
